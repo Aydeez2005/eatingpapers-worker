@@ -1,0 +1,21 @@
+{
+  "name": "ep-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch --env-file=.env src/index.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.0",
+    "express": "^5.1.0",
+    "node-id3": "^0.2.9"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.2",
+    "@types/node": "^20",
+    "tsx": "^4.19.0",
+    "typescript": "^5"
+  }
+}
