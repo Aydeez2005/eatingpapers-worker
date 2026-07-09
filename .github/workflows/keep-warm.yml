@@ -1,0 +1,19 @@
+name: keep-warm
+
+# Render's free tier spins the service down after ~15 min idle, and this image
+# cold-starts slowly. Ping /health every 10 min so it stays awake. Free: this
+# is a public repo, so GitHub Actions minutes are unlimited.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping worker health
+        run: |
+          curl -fsS --max-time 180 https://eatingpapers-worker.onrender.com/health \
+            && echo "worker awake" \
+            || echo "ping failed (may be cold-starting)"
