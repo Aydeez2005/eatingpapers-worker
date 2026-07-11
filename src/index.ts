@@ -154,14 +154,18 @@ app.post("/publish", async (req, res) => {
   }
 });
 
-// Process the uploaded final audio with Auphonic (all-in-one: clean +
-// transcribe + chapters + subtitles + summary, configured in the saved preset).
-// Input: { raw_audio_url, title }. Streams SSE progress and a final payload:
+// Process the final audio with Auphonic (all-in-one: clean + transcribe +
+// chapters + subtitles + summary, configured in the saved preset). The audio
+// comes either from an uploaded file (`raw_audio_url`) or is extracted from a
+// YouTube link (`youtube_url`, reuses the yt-dlp import extractor). Streams SSE
+// progress and a final payload:
 // { processed_audio_url, transcript, chapters, subtitles, summary }.
 app.post("/process-audio", async (req, res) => {
-  const { raw_audio_url, title } = req.body;
-  if (!raw_audio_url || typeof raw_audio_url !== "string") {
-    res.status(400).json({ error: "raw_audio_url is required" });
+  const { raw_audio_url, youtube_url, title } = req.body;
+  const hasRaw = raw_audio_url && typeof raw_audio_url === "string";
+  const hasYoutube = youtube_url && typeof youtube_url === "string";
+  if (!hasRaw && !hasYoutube) {
+    res.status(400).json({ error: "raw_audio_url or youtube_url is required" });
     return;
   }
 
@@ -175,6 +179,7 @@ app.post("/process-audio", async (req, res) => {
   };
 
   let rawTmpDir: string | null = null;
+  let extractTmpDir: string | null = null;
   let cleanedPath: string | null = null;
 
   try {
@@ -182,18 +187,28 @@ app.post("/process-audio", async (req, res) => {
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
 
-    // 1. Download the uploaded raw audio to a temp file.
-    sendProgress("Downloading uploaded audio…", 8);
-    rawTmpDir = await mkdtemp(join(tmpdir(), "ep-raw-"));
-    const rawPath = join(rawTmpDir, "raw.mp3");
-    const dl = await fetch(raw_audio_url);
-    if (!dl.ok) throw new Error(`Failed to download raw audio: ${dl.status}`);
-    await writeFile(rawPath, Buffer.from(await dl.arrayBuffer()));
+    // 1. Get the raw audio into a temp file — either extracted from a YouTube
+    //    link (yt-dlp, reusing the import extractor) or downloaded from the
+    //    uploaded file's URL.
+    let inputPath: string;
+    if (hasYoutube) {
+      const ex = await extractAudio(youtube_url, sendProgress);
+      inputPath = ex.audioPath;
+      extractTmpDir = ex.tmpDir;
+    } else {
+      sendProgress("Downloading uploaded audio…", 8);
+      rawTmpDir = await mkdtemp(join(tmpdir(), "ep-raw-"));
+      const rawPath = join(rawTmpDir, "raw.mp3");
+      const dl = await fetch(raw_audio_url);
+      if (!dl.ok) throw new Error(`Failed to download raw audio: ${dl.status}`);
+      await writeFile(rawPath, Buffer.from(await dl.arrayBuffer()));
+      inputPath = rawPath;
+    }
 
     // 2. Auphonic all-in-one processing → cleaned mp3 + transcript + chapters +
     //    subtitles + summary.
     const out = await processAudio(
-      rawPath,
+      inputPath,
       title || "Eatingpapers episode",
       sendProgress
     );
@@ -225,6 +240,9 @@ app.post("/process-audio", async (req, res) => {
     const { dirname } = await import("node:path");
     if (rawTmpDir) {
       await rm(rawTmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+    if (extractTmpDir) {
+      await cleanup(extractTmpDir).catch(() => {});
     }
     if (cleanedPath) {
       await rm(dirname(cleanedPath), { recursive: true, force: true }).catch(() => {});
