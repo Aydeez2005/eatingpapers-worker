@@ -2,7 +2,11 @@ import express from "express";
 import { extractAudio, cleanup } from "./youtube.js";
 import { uploadThumbnail, uploadAudio } from "./storage.js";
 import { uploadEpisode } from "./buzzsprout.js";
-import { embedChapters } from "./chapters.js";
+import {
+  embedChapters,
+  toEmbeddableChapters,
+  getAudioDurationSeconds,
+} from "./chapters.js";
 import { processAudio } from "./audio.js";
 
 const app = express();
@@ -103,7 +107,7 @@ app.post("/extract", async (req, res) => {
 });
 
 app.post("/publish", async (req, res) => {
-  const { audio_url, title, description, artwork_url } = req.body;
+  const { audio_url, title, description, artwork_url, chapters } = req.body;
   if (!audio_url) {
     res.status(400).json({ error: "audio_url is required" });
     return;
@@ -131,6 +135,12 @@ app.post("/publish", async (req, res) => {
     if (!audioRes.ok) throw new Error(`Failed to download audio: ${audioRes.status}`);
     const buffer = Buffer.from(await audioRes.arrayBuffer());
     await writeFile(audioPath, buffer);
+
+    if (Array.isArray(chapters) && chapters.length > 0) {
+      sendProgress("Embedding chapters...", 30);
+      const duration = await getAudioDurationSeconds(audioPath);
+      embedChapters(audioPath, toEmbeddableChapters(chapters, duration));
+    }
 
     sendProgress("Uploading to Buzzsprout...", 40);
     const episode = await uploadEpisode(
