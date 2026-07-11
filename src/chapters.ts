@@ -17,6 +17,27 @@ export function embedChapters(audioPath: string, chapters: Chapter[]): boolean {
   return result === true;
 }
 
+export interface TimedChapter {
+  title: string;
+  start_seconds: number;
+}
+
+// Auphonic chapters carry only a start. NodeID3 needs start+end, so derive each
+// end from the next chapter's start and the last from the audio duration.
+export function toEmbeddableChapters(
+  chapters: TimedChapter[],
+  durationSeconds: number
+): Chapter[] {
+  const sorted = chapters
+    .filter((c) => Number.isFinite(c.start_seconds))
+    .sort((a, b) => a.start_seconds - b.start_seconds);
+  return sorted.map((c, i) => ({
+    title: c.title,
+    start_time: c.start_seconds,
+    end_time: i < sorted.length - 1 ? sorted[i + 1].start_seconds : durationSeconds,
+  }));
+}
+
 export function formatChaptersForDescription(chapters: Chapter[]): string {
   if (chapters.length === 0) return "";
 
