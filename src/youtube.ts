@@ -1,6 +1,6 @@
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
@@ -32,9 +32,27 @@ export interface ExtractionResult {
   tmpDir: string;
 }
 
-function cookiesArgs(): string[] {
-  if (process.env.YT_COOKIES_FILE) return ["--cookies", process.env.YT_COOKIES_FILE];
-  return [];
+// yt-dlp opens the --cookies file read-write (it saves refreshed cookies on
+// close). On Render, secret files are mounted read-only (/etc/secrets/...), so
+// pointing yt-dlp straight at them crashes with EROFS. Copy the cookies to a
+// writable temp file once and hand yt-dlp that instead.
+let cookiesArgsPromise: Promise<string[]> | null = null;
+function cookiesArgs(): Promise<string[]> {
+  if (!cookiesArgsPromise) {
+    cookiesArgsPromise = (async () => {
+      const file = process.env.YT_COOKIES_FILE;
+      if (!file) return [];
+      const dest = join(tmpdir(), "yt-cookies.txt");
+      try {
+        await copyFile(file, dest);
+        return ["--cookies", dest];
+      } catch {
+        // Fall back to the original path (best effort).
+        return ["--cookies", file];
+      }
+    })();
+  }
+  return cookiesArgsPromise;
 }
 
 function cleanYouTubeUrl(url: string): string {
@@ -52,7 +70,7 @@ function cleanYouTubeUrl(url: string): string {
 }
 
 export async function getVideoMeta(url: string): Promise<VideoMeta> {
-  const { stdout } = await exec("yt-dlp", ["--dump-json", "--no-download", "--extractor-args", "youtube:player_client=web,default", ...cookiesArgs(), url], {
+  const { stdout } = await exec("yt-dlp", ["--dump-json", "--no-download", "--extractor-args", "youtube:player_client=web,default", ...(await cookiesArgs()), url], {
     maxBuffer: 10 * 1024 * 1024,
   });
   const info = JSON.parse(stdout);
@@ -84,6 +102,7 @@ export async function extractAudio(
 
   const tmpDir = await mkdtemp(join(tmpdir(), "ep-worker-"));
   const outputTemplate = join(tmpDir, "audio.%(ext)s");
+  const cookies = await cookiesArgs();
 
   // Use spawn instead of exec to read yt-dlp progress output
   await new Promise<void>((resolve, reject) => {
@@ -93,7 +112,7 @@ export async function extractAudio(
       "--postprocessor-args", "ffmpeg:-b:a 128k",
       "--write-thumbnail", "--convert-thumbnails", "jpg",
       "--newline", "--progress",
-      ...cookiesArgs(),
+      ...cookies,
       "-o", outputTemplate, cleanUrl,
     ]);
 
