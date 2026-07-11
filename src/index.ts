@@ -3,6 +3,7 @@ import { extractAudio, cleanup } from "./youtube.js";
 import { uploadThumbnail, uploadAudio } from "./storage.js";
 import { uploadEpisode } from "./buzzsprout.js";
 import { embedChapters } from "./chapters.js";
+import { processAudio } from "./audio.js";
 
 const app = express();
 app.use(express.json());
@@ -150,6 +151,84 @@ app.post("/publish", async (req, res) => {
     console.error("Publish failed:", message);
     res.write(`data: ${JSON.stringify({ type: "error", error: message })}\n\n`);
     res.end();
+  }
+});
+
+// Process the uploaded final audio with Auphonic (all-in-one: clean +
+// transcribe + chapters + subtitles + summary, configured in the saved preset).
+// Input: { raw_audio_url, title }. Streams SSE progress and a final payload:
+// { processed_audio_url, transcript, chapters, subtitles, summary }.
+app.post("/process-audio", async (req, res) => {
+  const { raw_audio_url, title } = req.body;
+  if (!raw_audio_url || typeof raw_audio_url !== "string") {
+    res.status(400).json({ error: "raw_audio_url is required" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const sendProgress = (step: string, pct: number) => {
+    res.write(`data: ${JSON.stringify({ type: "progress", step, pct })}\n\n`);
+  };
+
+  let rawTmpDir: string | null = null;
+  let cleanedPath: string | null = null;
+
+  try {
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    // 1. Download the uploaded raw audio to a temp file.
+    sendProgress("Downloading uploaded audio…", 8);
+    rawTmpDir = await mkdtemp(join(tmpdir(), "ep-raw-"));
+    const rawPath = join(rawTmpDir, "raw.mp3");
+    const dl = await fetch(raw_audio_url);
+    if (!dl.ok) throw new Error(`Failed to download raw audio: ${dl.status}`);
+    await writeFile(rawPath, Buffer.from(await dl.arrayBuffer()));
+
+    // 2. Auphonic all-in-one processing → cleaned mp3 + transcript + chapters +
+    //    subtitles + summary.
+    const out = await processAudio(
+      rawPath,
+      title || "Eatingpapers episode",
+      sendProgress
+    );
+    cleanedPath = out.mp3Path;
+
+    // 3. Upload the cleaned audio to the public `audio` bucket.
+    sendProgress("Saving cleaned audio…", 85);
+    const processedAudioUrl = await uploadAudio(cleanedPath);
+
+    sendProgress("Done!", 100);
+    res.write(
+      `data: ${JSON.stringify({
+        type: "done",
+        processed_audio_url: processedAudioUrl,
+        transcript: out.transcript,
+        chapters: out.chapters,
+        subtitles: out.subtitles,
+        summary: out.summary,
+      })}\n\n`
+    );
+    res.end();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    console.error("process-audio failed:", message);
+    res.write(`data: ${JSON.stringify({ type: "error", error: message })}\n\n`);
+    res.end();
+  } finally {
+    const { rm } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    if (rawTmpDir) {
+      await rm(rawTmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+    if (cleanedPath) {
+      await rm(dirname(cleanedPath), { recursive: true, force: true }).catch(() => {});
+    }
   }
 });
 
