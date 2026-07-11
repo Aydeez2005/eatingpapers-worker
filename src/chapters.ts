@@ -38,6 +38,27 @@ export function toEmbeddableChapters(
   }));
 }
 
+// Read an audio file's duration (seconds) via ffprobe (installed in the image).
+export async function getAudioDurationSeconds(path: string): Promise<number> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+  const { stdout } = await run("ffprobe", [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    path,
+  ]);
+  const seconds = parseFloat(stdout.trim());
+  if (!Number.isFinite(seconds)) {
+    throw new Error("Could not read audio duration via ffprobe");
+  }
+  return seconds;
+}
+
 export function formatChaptersForDescription(chapters: Chapter[]): string {
   if (chapters.length === 0) return "";
 
