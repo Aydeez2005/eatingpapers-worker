@@ -93,19 +93,17 @@ async function startAuphonicProduction(
   const presetUuid = process.env.AUPHONIC_PRESET_UUID;
   if (!presetUuid) throw new Error("AUPHONIC_PRESET_UUID is not set");
 
-  const { readFile } = await import("node:fs/promises");
+  const { openAsBlob } = await import("node:fs");
   const { basename } = await import("node:path");
-  const buffer = await readFile(inputFilePath);
+  // Disk-backed Blob: undici streams it off disk into the multipart body instead
+  // of loading the whole file into memory (which OOMs on large uploads).
+  const fileBlob = await openAsBlob(inputFilePath, { type: "audio/mpeg" });
 
   const form = new FormData();
   form.append("preset", presetUuid);
   form.append("title", title);
   form.append("action", "start");
-  form.append(
-    "input_file",
-    new Blob([buffer], { type: "audio/mpeg" }),
-    basename(inputFilePath)
-  );
+  form.append("input_file", fileBlob, basename(inputFilePath));
 
   const res = await fetch(`${AUPHONIC_API}/simple/productions.json`, {
     method: "POST",

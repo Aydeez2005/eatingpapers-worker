@@ -193,7 +193,7 @@ app.post("/process-audio", async (req, res) => {
   let cleanedPath: string | null = null;
 
   try {
-    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { mkdtemp } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
 
@@ -210,8 +210,18 @@ app.post("/process-audio", async (req, res) => {
       rawTmpDir = await mkdtemp(join(tmpdir(), "ep-raw-"));
       const rawPath = join(rawTmpDir, "raw.mp3");
       const dl = await fetch(raw_audio_url);
-      if (!dl.ok) throw new Error(`Failed to download raw audio: ${dl.status}`);
-      await writeFile(rawPath, Buffer.from(await dl.arrayBuffer()));
+      if (!dl.ok || !dl.body)
+        throw new Error(`Failed to download raw audio: ${dl.status}`);
+      // Stream straight to disk instead of Buffer.from(arrayBuffer): buffering a
+      // full podcast (tens–hundreds of MB) in memory OOMs the 512MB container.
+      const { pipeline } = await import("node:stream/promises");
+      const { createWriteStream } = await import("node:fs");
+      const { Readable } = await import("node:stream");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await pipeline(
+        Readable.fromWeb(dl.body as any),
+        createWriteStream(rawPath)
+      );
       inputPath = rawPath;
     }
 
