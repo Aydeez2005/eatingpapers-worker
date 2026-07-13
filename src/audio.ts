@@ -137,19 +137,24 @@ function findOutputUrl(data: any, ext: string): string | null {
 
 // Download a URL (Bearer auth) to a temp file; return its path.
 async function downloadToTempFile(url: string): Promise<string> {
-  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { mkdtemp } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${auphonicKey()}` },
   });
-  if (!res.ok) throw new Error(`Auphonic download failed: ${res.status}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!res.ok || !res.body)
+    throw new Error(`Auphonic download failed: ${res.status}`);
 
   const dir = await mkdtemp(join(tmpdir(), "ep-clean-"));
   const outPath = join(dir, "cleaned.mp3");
-  await writeFile(outPath, buffer);
+  // Stream to disk rather than Buffer.from(arrayBuffer) to keep memory flat.
+  const { pipeline } = await import("node:stream/promises");
+  const { createWriteStream } = await import("node:fs");
+  const { Readable } = await import("node:stream");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await pipeline(Readable.fromWeb(res.body as any), createWriteStream(outPath));
   return outPath;
 }
 
