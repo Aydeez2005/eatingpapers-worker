@@ -1,4 +1,6 @@
-FROM node:20-slim
+# Node 22+: @supabase/supabase-js's realtime client needs a native global
+# WebSocket, which only exists from Node 22 (Node 20 throws at createClient()).
+FROM node:22-slim
 
 # ca-certificates is required for curl to verify TLS when downloading yt-dlp
 # (node:20-slim ships without it).
