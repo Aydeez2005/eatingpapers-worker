@@ -13,7 +13,15 @@ export function embedChapters(audioPath: string, chapters: Chapter[]): boolean {
     },
   }));
 
-  const result = NodeID3.update({ chapter: id3Chapters }, audioPath);
+  // The stored audio can already carry chapters (Auphonic embeds its own during
+  // cleaning, and a re-publish would stack again). NodeID3.update MERGES tags,
+  // so it leaves the existing CHAP frames in place and appends ours, producing
+  // duplicate timecodes with stale titles. Strip every existing tag first, then
+  // write a fresh set so only the current chapters remain. Safe because
+  // Buzzsprout takes title/description/artwork from the upload form fields, not
+  // from the file's ID3 tags.
+  NodeID3.removeTags(audioPath);
+  const result = NodeID3.write({ chapter: id3Chapters }, audioPath);
   return result === true;
 }
 
